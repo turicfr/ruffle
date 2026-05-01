@@ -542,6 +542,10 @@ impl<'a> ShapeConverter<'a> {
         for (i, path) in self.fills.iter_mut().enumerate() {
             // These invariants are checked above (any invalid/empty fill ID should not have been added).
             debug_assert!(i < self.fill_styles.len());
+
+            // Fills must be closed loops. Flash ignores any unclosed fill paths.
+            path.segments.retain(PathSegment::is_closed);
+
             if path.segments.is_empty() {
                 continue;
             }

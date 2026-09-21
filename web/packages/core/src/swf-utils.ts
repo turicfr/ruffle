@@ -3,7 +3,7 @@ import {
     FUTURESPLASH_MIMETYPE,
     FLASH7_AND_8_MIMETYPE,
     FLASH_MOVIE_MIMETYPE,
-} from "./flash-identifiers";
+} from "./flash-identifiers.js";
 
 /**
  * Returns whether the given filename ends in a known Flash extension.
@@ -83,6 +83,5 @@ export function isSwf(filename: string, mimeType: string | null): boolean {
  */
 export function swfFileName(swfUrl: URL): string {
     const pathName = swfUrl.pathname;
-    const name = pathName.substring(pathName.lastIndexOf("/") + 1);
-    return name;
+    return pathName.substring(pathName.lastIndexOf("/") + 1);
 }

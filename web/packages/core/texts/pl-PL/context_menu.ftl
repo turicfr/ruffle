@@ -1,4 +1,4 @@
-context-menu-download-swf = Pobierz .swf
+context-menu-download-swf = Pobierz SWF
 context-menu-copy-debug-info = Kopiuj informacje debugowania
 context-menu-open-save-manager = Otwórz menadżer zapisów
 context-menu-about-ruffle =
@@ -8,5 +8,5 @@ context-menu-about-ruffle =
     }
 context-menu-hide = Ukryj to menu
 context-menu-exit-fullscreen = Opuść tryb pełnoekranowy
-context-menu-enter-fullscreen = Tryb pełnoekranowy
+context-menu-enter-fullscreen = Włącz tryb pełnoekranowy
 context-menu-volume-controls = Sterowanie głośnością

@@ -189,9 +189,7 @@ impl BitmapData {
             .expect("get_context method must return a value")
             .dyn_into()
             .expect("get_context method returned something other than a CanvasRenderingContext2d");
-        context
-            .put_image_data(&image_data, 0.0, 0.0)
-            .into_js_result()?;
+        context.put_image_data(&image_data, 0, 0).into_js_result()?;
         Ok(BitmapData {
             image_data,
             canvas,
@@ -207,7 +205,7 @@ impl BitmapData {
         self.canvas.set_width(bitmap.width());
         self.canvas.set_height(bitmap.height());
         self.context
-            .put_image_data(&image_data, 0.0, 0.0)
+            .put_image_data(&image_data, 0, 0)
             .into_js_result()?;
         Ok(())
     }
@@ -324,7 +322,7 @@ impl WebCanvasRenderBackend {
     }
 
     #[inline]
-    fn set_transform(&mut self, matrix: &Matrix) {
+    fn set_transform(&self, matrix: &Matrix) {
         self.context
             .set_transform(
                 matrix.a.into(),
@@ -388,7 +386,7 @@ impl WebCanvasRenderBackend {
         ));
     }
 
-    fn apply_blend_mode(&mut self, blend: RenderBlendMode) {
+    fn apply_blend_mode(&self, blend: RenderBlendMode) {
         // TODO: Objects with a blend mode need to be rendered to an intermediate buffer first,
         // but for now we render each child directly to the canvas. This should look reasonable for most
         // common cases.
@@ -456,7 +454,7 @@ impl WebCanvasRenderBackend {
         }
     }
 
-    fn draw_lines(&mut self, color: Color, mut matrix: Matrix, rect: bool) {
+    fn draw_lines(&self, color: Color, mut matrix: Matrix, rect: bool) {
         matrix.tx += Twips::HALF_PX;
         matrix.ty += Twips::HALF_PX;
         let dom_matrix = matrix.to_dom_matrix();
@@ -604,6 +602,7 @@ impl CommandHandler for WebCanvasRenderBackend {
         transform: Transform,
         smoothing: bool,
         _pixel_snapping: PixelSnapping,
+        region: PixelRegion,
     ) {
         if self.mask_state == MaskState::ClearMask {
             return;
@@ -619,7 +618,17 @@ impl CommandHandler for WebCanvasRenderBackend {
         if bitmap_canvas.width() > 0 && bitmap_canvas.height() > 0 {
             let _ = self
                 .context
-                .draw_image_with_html_canvas_element(bitmap_canvas, 0.0, 0.0);
+                .draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+                    bitmap_canvas,
+                    region.x_min as f64,
+                    region.y_min as f64,
+                    region.width() as f64,
+                    region.height() as f64,
+                    0.0,
+                    0.0,
+                    region.width() as f64,
+                    region.height() as f64,
+                );
         }
 
         self.clear_color_filter();

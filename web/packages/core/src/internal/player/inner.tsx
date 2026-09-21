@@ -1,4 +1,4 @@
-import type { RuffleHandle, ZipWriter } from "../../../dist/ruffle_web";
+import type { RuffleHandle, ZipWriter } from "../../../dist/ruffle_web.js";
 import {
     AutoPlay,
     BackgroundExecutionMode,
@@ -10,24 +10,25 @@ import {
     UnmuteOverlay,
     URLLoadOptions,
     WindowMode,
-} from "../../public/config";
-import { MovieMetadata, ReadyState } from "../../public/player";
-import { ruffleShadowTemplate } from "../ui/shadow-template";
-import { text, textAsParagraphs } from "../i18n";
-import { swfFileName } from "../../swf-utils";
-import { isExtension } from "../../current-script";
-import { buildInfo } from "../../build-info";
-import { RUFFLE_ORIGIN } from "../constants";
+} from "../../public/config/index.js";
+import { MovieMetadata, ReadyState } from "../../public/player/index.js";
+import { ruffleShadowTemplate } from "../ui/shadow-template.js";
+import { text, textAsParagraphs } from "../i18n.js";
+import { swfFileName } from "../../swf-utils.js";
+import { isExtension } from "../../current-script.js";
+import { buildInfo } from "../../build-info.js";
+import { RUFFLE_ORIGIN } from "../constants.js";
 import {
     InvalidOptionsError,
     InvalidSwfError,
+    LoadBeginError,
     LoadRuffleWasmError,
     LoadSwfError,
-} from "../errors";
-import { showPanicScreen } from "../ui/panic";
-import { createRuffleBuilder } from "../../load-ruffle";
-import { lookupElement } from "../register-element";
-import { configureBuilder } from "../builder";
+} from "../errors.js";
+import { showPanicScreen } from "../ui/panic.js";
+import { createRuffleBuilder } from "../../load-ruffle.js";
+import { lookupElement } from "../register-element.js";
+import { configureBuilder } from "../builder.js";
 
 const DIMENSION_REGEX = /^\s*(\d+(\.\d+)?(%)?)/;
 
@@ -56,19 +57,6 @@ declare global {
     interface AudioSession {
         type?: string;
     }
-    // See https://github.com/microsoft/TypeScript-DOM-lib-generator/issues/1615
-    type OrientationLockType =
-        | "any"
-        | "landscape"
-        | "landscape-primary"
-        | "landscape-secondary"
-        | "natural"
-        | "portrait"
-        | "portrait-primary"
-        | "portrait-secondary";
-    interface ScreenOrientation extends EventTarget {
-        lock(orientation: OrientationLockType): Promise<void>;
-    }
 }
 
 /**
@@ -93,6 +81,12 @@ interface ContextMenuItem {
      * @default true
      */
     enabled?: boolean;
+
+    /**
+     * Whether this item has a checkmark next to it.
+     * When defined, a checkmark column is shown for all items in the context menu.
+     */
+    checked?: boolean;
 }
 
 /**
@@ -103,9 +97,7 @@ interface ContextMenuItem {
  */
 function sanitizeParameters(
     parameters:
-        | (URLSearchParams | string | Record<string, string>)
-        | undefined
-        | null,
+        (URLSearchParams | string | Record<string, string>) | undefined | null,
 ): Record<string, string> {
     if (parameters === null || parameters === undefined) {
         return {};
@@ -1018,7 +1010,7 @@ export class InnerPlayer {
             }
         } catch (e) {
             console.error(`Serious error occurred loading SWF file: ${e}`);
-            const err = new Error(e as string);
+            const err = new LoadBeginError(e as string);
             this.panic(err);
             throw err;
         }
@@ -1503,7 +1495,6 @@ export class InnerPlayer {
     }
 
     private contextMenuItems(): Array<ContextMenuItem | null> {
-        const CHECKMARK = String.fromCharCode(0x2713);
         const items: Array<ContextMenuItem | null> = [];
         const addSeparator = () => {
             // Don't start with or duplicate separators.
@@ -1524,12 +1515,11 @@ export class InnerPlayer {
                     addSeparator();
                 }
                 items.push({
-                    // TODO: better checkboxes
-                    text:
-                        item.caption + (item.checked ? ` (${CHECKMARK})` : ``),
+                    text: item.caption,
                     onClick: async () =>
                         this.instance?.run_context_menu_callback(index),
                     enabled: item.enabled,
+                    checked: item.checked,
                 });
             });
 
@@ -1669,6 +1659,14 @@ export class InnerPlayer {
             return;
         }
 
+        // If Shift is held while right-clicking, hide our custom menu and show
+        // the browser's native context menu instead.
+        // Shift+right-click works consistently on Windows, macOS, and Linux.
+        if (event.type === "contextmenu" && event.shiftKey) {
+            this.hideContextMenu();
+            return;
+        }
+
         event.preventDefault();
 
         if (this._suppressContextMenu) {
@@ -1720,8 +1718,17 @@ export class InnerPlayer {
             );
         }
 
+        const items = this.contextMenuItems();
+        const hasCheckmarks = items.some(
+            (item) => item !== null && item.checked !== undefined,
+        );
+        this.contextMenuElement.classList.toggle(
+            "has-checkmarks",
+            hasCheckmarks,
+        );
+
         // Populate context menu items.
-        for (const item of this.contextMenuItems()) {
+        for (const item of items) {
             if (item === null) {
                 this.contextMenuElement.appendChild(
                     <li class="menu-separator">
@@ -1729,13 +1736,14 @@ export class InnerPlayer {
                     </li>,
                 );
             } else {
-                const { text, onClick, enabled } = item;
+                const { text, onClick, enabled, checked } = item;
 
                 const menuItem = (
                     <li
                         class={{
                             "menu-item": true,
                             disabled: enabled === false,
+                            checked: checked === true,
                         }}
                         data-text={text}
                     >
@@ -1786,19 +1794,31 @@ export class InnerPlayer {
         // mode and get the body when it's null.
         const viewportElement = document.scrollingElement || document.body;
 
-        // Keep the entire context menu inside the viewport.
-        const overflowX = Math.max(
-            0,
-            event.clientX + contextMenuRect.width - viewportElement.clientWidth,
-        );
-        const overflowY = Math.max(
-            0,
-            event.clientY +
-                contextMenuRect.height -
-                viewportElement.clientHeight,
-        );
-        const x = event.clientX - playerRect.x - overflowX;
-        const y = event.clientY - playerRect.y - overflowY;
+        const menuWidth = contextMenuRect.width;
+        const menuHeight = contextMenuRect.height;
+        const vw = viewportElement.clientWidth;
+        const vh = viewportElement.clientHeight;
+
+        // Flip the menu above/left of the cursor (like native context menus)
+        // when it would overflow, falling back to clamping if there's no room.
+        let cx = event.clientX;
+        if (cx + menuWidth > vw) {
+            cx =
+                event.clientX - menuWidth >= 0
+                    ? event.clientX - menuWidth
+                    : vw - menuWidth;
+        }
+
+        let cy = event.clientY;
+        if (cy + menuHeight > vh) {
+            cy =
+                event.clientY - menuHeight >= 0
+                    ? event.clientY - menuHeight
+                    : vh - menuHeight;
+        }
+
+        const x = cx - playerRect.x;
+        const y = cy - playerRect.y;
 
         const isRtl =
             getComputedStyle(this.contextMenuElement).direction === "rtl";
@@ -2070,13 +2090,12 @@ export class InnerPlayer {
                         `Error stack:\n\`\`\`\n${error.stack}\n\`\`\`\n`,
                     ) - 1;
                 if (error.avmStack) {
-                    const avmStackIndex =
+                    errorArray.avmStackIndex =
                         errorArray.push(
                             `AVM2 stack:\n\`\`\`\n    ${error.avmStack
                                 .trim()
                                 .replace(/\t/g, "    ")}\n\`\`\`\n`,
                         ) - 1;
-                    errorArray.avmStackIndex = avmStackIndex;
                 }
                 errorArray.stackIndex = stackIndex;
             }
@@ -2497,8 +2516,7 @@ function base64ToArray(bytesBase64: string): Uint8Array<ArrayBuffer> {
  */
 function base64ToBlob(bytesBase64: string, mimeString: string): Blob {
     const ab = base64ToArray(bytesBase64);
-    const blob = new Blob([ab], { type: mimeString });
-    return blob;
+    return new Blob([ab], { type: mimeString });
 }
 
 /**
@@ -2595,7 +2613,7 @@ function parseAllowScriptAccess(
 function detectBrowserDirection(): string {
     const browserLocale = new Intl.Locale(navigator.language);
 
-    let textInfo = null;
+    let textInfo;
     if (
         "getTextInfo" in browserLocale &&
         typeof browserLocale.getTextInfo === "function"

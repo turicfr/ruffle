@@ -147,7 +147,7 @@ struct RuffleInstance {
     pressed_buttons: Vec<GamepadButton>,
 }
 
-#[wasm_bindgen(raw_module = "./internal/player/inner")]
+#[wasm_bindgen(raw_module = "./internal/player/inner.js")]
 unsafe extern "C" {
     #[derive(Clone)]
     pub type JavascriptPlayer;
@@ -286,8 +286,8 @@ impl RuffleHandle {
             segments.push(&swf_name);
         }
 
-        let mut movie =
-            SwfMovie::from_data(&swf_data.to_vec(), url.to_string(), None).map_err(|e| {
+        let mut movie = SwfMovie::from_data(&swf_data.to_vec(), url.to_string(), None, None)
+            .map_err(|e| {
                 let _ = self.with_core_mut(|core| {
                     core.ui_mut()
                         .display_root_movie_download_failed_message(true, e.to_string());
@@ -605,8 +605,8 @@ impl RuffleHandle {
                 move |js_event: PointerEvent| {
                     let _ = ruffle.with_instance(move |instance| {
                         let event = PlayerEvent::MouseMove {
-                            x: f64::from(js_event.offset_x()) * instance.device_pixel_ratio,
-                            y: f64::from(js_event.offset_y()) * instance.device_pixel_ratio,
+                            x: js_event.offset_x() * instance.device_pixel_ratio,
+                            y: js_event.offset_y() * instance.device_pixel_ratio,
                         };
                         let _ = instance.with_core_mut(|core| {
                             core.handle_event(event);
@@ -669,8 +669,8 @@ impl RuffleHandle {
                             _ => MouseButton::Unknown,
                         };
                         let event = PlayerEvent::MouseDown {
-                            x: f64::from(js_event.offset_x()) * device_pixel_ratio,
-                            y: f64::from(js_event.offset_y()) * device_pixel_ratio,
+                            x: js_event.offset_x() * device_pixel_ratio,
+                            y: js_event.offset_y() * device_pixel_ratio,
                             button,
                             // TODO The index should be provided by the browser, not calculated.
                             index: None,
@@ -701,8 +701,8 @@ impl RuffleHandle {
                                 .release_pointer_capture(js_event.pointer_id());
                         }
                         let event = PlayerEvent::MouseUp {
-                            x: f64::from(js_event.offset_x()) * instance.device_pixel_ratio,
-                            y: f64::from(js_event.offset_y()) * instance.device_pixel_ratio,
+                            x: js_event.offset_x() * instance.device_pixel_ratio,
+                            y: js_event.offset_y() * instance.device_pixel_ratio,
                             button: match js_event.button() {
                                 0 => MouseButton::Left,
                                 1 => MouseButton::Middle,
@@ -780,6 +780,7 @@ impl RuffleHandle {
 
                                 if let Some(control_code) = web_to_ruffle_text_control(
                                     &js_event.key(),
+                                    &js_event.code(),
                                     is_ctrl_cmd,
                                     js_event.shift_key(),
                                 ) {

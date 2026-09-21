@@ -567,12 +567,13 @@ impl WebGlRenderBackend {
         &mut self,
         shape: DistilledShape,
         bitmap_source: &dyn BitmapSource,
+        scale: f32,
     ) -> Result<Vec<Draw>, Error> {
         use ruffle_render::tessellator::DrawType as TessDrawType;
 
-        let lyon_mesh = self
-            .shape_tessellator
-            .tessellate_shape(shape, bitmap_source);
+        let lyon_mesh =
+            self.shape_tessellator
+                .tessellate_shape_with_scale(shape, bitmap_source, scale);
 
         let mut draws = Vec::with_capacity(lyon_mesh.draws.len());
         for draw in lyon_mesh.draws {
@@ -727,7 +728,7 @@ impl WebGlRenderBackend {
         };
     }
 
-    fn set_stencil_state(&mut self) {
+    fn set_stencil_state(&self) {
         // Set stencil state for masking, if necessary.
         if self.mask_state_dirty {
             match self.mask_state {
@@ -758,7 +759,7 @@ impl WebGlRenderBackend {
         }
     }
 
-    fn apply_blend_mode(&mut self, mode: RenderBlendMode) {
+    fn apply_blend_mode(&self, mode: RenderBlendMode) {
         let (blend_op, src_rgb, dst_rgb) = match mode {
             RenderBlendMode::Builtin(BlendMode::Normal) => {
                 // src + (1-a)
@@ -815,7 +816,7 @@ impl WebGlRenderBackend {
         self.gl.clear(Gl::COLOR_BUFFER_BIT | Gl::STENCIL_BUFFER_BIT);
     }
 
-    fn end_frame(&mut self) {
+    fn end_frame(&self) {
         // Resolve MSAA, if we're using it (WebGL2).
         if let (Some(gl), Some(msaa_buffers)) = (&self.gl2, &self.msaa_buffers) {
             // Disable any remaining masking state.
@@ -1040,7 +1041,16 @@ impl RenderBackend for WebGlRenderBackend {
         shape: DistilledShape,
         bitmap_source: &dyn BitmapSource,
     ) -> ShapeHandle {
-        let mesh = match self.register_shape_internal(shape, bitmap_source) {
+        self.register_shape_with_scale(shape, bitmap_source, 1.0)
+    }
+
+    fn register_shape_with_scale(
+        &mut self,
+        shape: DistilledShape,
+        bitmap_source: &dyn BitmapSource,
+        scale: f32,
+    ) -> ShapeHandle {
+        let mesh = match self.register_shape_internal(shape, bitmap_source, scale) {
             Ok(draws) => Mesh {
                 draws,
                 gl2: self.gl2.clone(),
@@ -1258,22 +1268,32 @@ impl CommandHandler for WebGlRenderBackend {
         transform: Transform,
         smoothing: bool,
         pixel_snapping: PixelSnapping,
+        region: PixelRegion,
     ) {
         self.set_stencil_state();
         let entry = as_registry_data(&bitmap);
         // Adjust the quad draw to use the target bitmap.
         let quad = &self.bitmap_quad_draws;
         let draw = &quad[0];
-        let bitmap_matrix = if let DrawType::Bitmap(BitmapDraw { matrix, .. }) = &draw.draw_type {
-            matrix
-        } else {
-            unreachable!()
+
+        let bitmap_matrix = {
+            let width = entry.width as f32;
+            let height = entry.height as f32;
+            &[
+                [region.width() as f32 / width, 0.0, 0.0],
+                [0.0, region.height() as f32 / height, 0.0],
+                [
+                    region.x_min as f32 / width,
+                    region.y_min as f32 / height,
+                    1.0,
+                ],
+            ]
         };
 
-        // Scale the quad to the bitmap's dimensions.
         let mut matrix = transform.matrix;
         pixel_snapping.apply(&mut matrix);
-        matrix *= Matrix::scale(entry.width as f32, entry.height as f32);
+        // Scale the quad to the region's dimensions.
+        matrix *= Matrix::scale(region.width() as f32, region.height() as f32);
 
         let world_matrix = [
             [matrix.a, matrix.b, 0.0, 0.0],

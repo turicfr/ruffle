@@ -168,7 +168,7 @@ impl FilterAvm2Ext for Filter {
             )?));
         }
 
-        unreachable!("{object:?} must be of type BitmapFilter")
+        panic!("Unexpected BitmapFilter type {object:?}")
     }
 
     fn as_avm2_object<'gc>(
@@ -330,15 +330,14 @@ fn avm2_to_color_matrix_filter<'gc>(
     if let Some(matrix_object) = object
         .get_slot(color_matrix_filter_slots::_MATRIX)
         .as_object()
+        && let Some(array) = matrix_object.as_array_storage()
     {
-        if let Some(array) = matrix_object.as_array_storage() {
-            for i in 0..matrix.len().min(array.length()) {
-                matrix[i] = array
-                    .get(i)
-                    .map(|v| v.coerce_to_number(activation))
-                    .transpose()?
-                    .unwrap_or_default() as f32;
-            }
+        for i in 0..matrix.len().min(array.length()) {
+            matrix[i] = array
+                .get(i)
+                .map(|v| v.coerce_to_number(activation))
+                .transpose()?
+                .unwrap_or_default() as f32;
         }
     }
     Ok(Filter::ColorMatrixFilter(ColorMatrixFilter { matrix }))
@@ -367,15 +366,14 @@ fn avm2_to_convolution_filter<'gc>(
     if let Some(matrix_object) = object
         .get_slot(convolution_filter_slots::MATRIX)
         .as_object()
+        && let Some(array) = matrix_object.as_array_storage()
     {
-        if let Some(array) = matrix_object.as_array_storage() {
-            for value in array.iter() {
-                matrix.push(
-                    value
-                        .unwrap_or(Value::Undefined)
-                        .coerce_to_number(activation)? as f32,
-                );
-            }
+        for value in array.iter() {
+            matrix.push(
+                value
+                    .unwrap_or(Value::Undefined)
+                    .coerce_to_number(activation)? as f32,
+            );
         }
     }
     let alpha = object
@@ -690,21 +688,51 @@ fn avm2_to_gradient_filter<'gc>(
     activation: &mut Activation<'_, 'gc>,
     object: Object<'gc>,
 ) -> Result<GradientFilter, Error<'gc>> {
-    #[expect(clippy::assertions_on_constants)]
-    {
-        assert!(gradient_bevel_filter_slots::_ANGLE == gradient_glow_filter_slots::_ANGLE);
-        assert!(gradient_bevel_filter_slots::_BLUR_X == gradient_glow_filter_slots::_BLUR_X);
-        assert!(gradient_bevel_filter_slots::_BLUR_Y == gradient_glow_filter_slots::_BLUR_Y);
-        assert!(gradient_bevel_filter_slots::_DISTANCE == gradient_glow_filter_slots::_DISTANCE);
-        assert!(gradient_bevel_filter_slots::_KNOCKOUT == gradient_glow_filter_slots::_KNOCKOUT);
-        assert!(gradient_bevel_filter_slots::_QUALITY == gradient_glow_filter_slots::_QUALITY);
-        assert!(gradient_bevel_filter_slots::_STRENGTH == gradient_glow_filter_slots::_STRENGTH);
-        assert!(gradient_bevel_filter_slots::_TYPE == gradient_glow_filter_slots::_TYPE);
+    assert_eq!(
+        gradient_bevel_filter_slots::_ANGLE,
+        gradient_glow_filter_slots::_ANGLE
+    );
+    assert_eq!(
+        gradient_bevel_filter_slots::_BLUR_X,
+        gradient_glow_filter_slots::_BLUR_X
+    );
+    assert_eq!(
+        gradient_bevel_filter_slots::_BLUR_Y,
+        gradient_glow_filter_slots::_BLUR_Y
+    );
+    assert_eq!(
+        gradient_bevel_filter_slots::_DISTANCE,
+        gradient_glow_filter_slots::_DISTANCE
+    );
+    assert_eq!(
+        gradient_bevel_filter_slots::_KNOCKOUT,
+        gradient_glow_filter_slots::_KNOCKOUT
+    );
+    assert_eq!(
+        gradient_bevel_filter_slots::_QUALITY,
+        gradient_glow_filter_slots::_QUALITY
+    );
+    assert_eq!(
+        gradient_bevel_filter_slots::_STRENGTH,
+        gradient_glow_filter_slots::_STRENGTH
+    );
+    assert_eq!(
+        gradient_bevel_filter_slots::_TYPE,
+        gradient_glow_filter_slots::_TYPE
+    );
 
-        assert!(gradient_bevel_filter_slots::_COLORS == gradient_glow_filter_slots::_COLORS);
-        assert!(gradient_bevel_filter_slots::_ALPHAS == gradient_glow_filter_slots::_ALPHAS);
-        assert!(gradient_bevel_filter_slots::_RATIOS == gradient_glow_filter_slots::_RATIOS);
-    }
+    assert_eq!(
+        gradient_bevel_filter_slots::_COLORS,
+        gradient_glow_filter_slots::_COLORS
+    );
+    assert_eq!(
+        gradient_bevel_filter_slots::_ALPHAS,
+        gradient_glow_filter_slots::_ALPHAS
+    );
+    assert_eq!(
+        gradient_bevel_filter_slots::_RATIOS,
+        gradient_glow_filter_slots::_RATIOS
+    );
 
     let angle = object
         .get_slot(gradient_bevel_filter_slots::_ANGLE)
@@ -866,49 +894,41 @@ fn get_gradient_colors<'gc>(
     if let Some(colors_object) = object
         .get_slot(gradient_bevel_filter_slots::_COLORS)
         .as_object()
+        && let Some(colors_array) = colors_object.as_array_storage()
+        && let Some(alphas_object) = object
+            .get_slot(gradient_bevel_filter_slots::_ALPHAS)
+            .as_object()
+        && let Some(alphas_array) = alphas_object.as_array_storage()
+        && let Some(ratios_object) = object
+            .get_slot(gradient_bevel_filter_slots::_RATIOS)
+            .as_object()
+        && let Some(ratios_array) = ratios_object.as_array_storage()
     {
-        if let Some(colors_array) = colors_object.as_array_storage() {
-            if let Some(alphas_object) = object
-                .get_slot(gradient_bevel_filter_slots::_ALPHAS)
-                .as_object()
-            {
-                if let Some(alphas_array) = alphas_object.as_array_storage() {
-                    if let Some(ratios_object) = object
-                        .get_slot(gradient_bevel_filter_slots::_RATIOS)
-                        .as_object()
-                    {
-                        if let Some(ratios_array) = ratios_object.as_array_storage() {
-                            // Flash only keeps the elements from any array until the lowest index in each array
-                            for i in 0..ratios_array
-                                .length()
-                                .min(alphas_array.length())
-                                .min(colors_array.length())
-                            {
-                                let color = colors_array
-                                    .get(i)
-                                    .map(|v| v.coerce_to_u32(activation))
-                                    .transpose()?
-                                    .unwrap_or_default();
-                                let alpha = colors_array
-                                    .get(i)
-                                    .map(|v| v.coerce_to_number(activation))
-                                    .transpose()?
-                                    .unwrap_or_default()
-                                    as f32;
-                                let ratio = colors_array
-                                    .get(i)
-                                    .map(|v| v.coerce_to_u32(activation))
-                                    .transpose()?
-                                    .unwrap_or_default();
-                                colors.push(GradientRecord {
-                                    ratio: ratio.clamp(0, 255) as u8,
-                                    color: Color::from_rgb(color, (alpha * 255.0) as u8),
-                                })
-                            }
-                        }
-                    }
-                }
-            }
+        // Flash only keeps the elements from any array until the lowest index in each array
+        for i in 0..ratios_array
+            .length()
+            .min(alphas_array.length())
+            .min(colors_array.length())
+        {
+            let color = colors_array
+                .get(i)
+                .map(|v| v.coerce_to_u32(activation))
+                .transpose()?
+                .unwrap_or_default();
+            let alpha = colors_array
+                .get(i)
+                .map(|v| v.coerce_to_number(activation))
+                .transpose()?
+                .unwrap_or_default() as f32;
+            let ratio = colors_array
+                .get(i)
+                .map(|v| v.coerce_to_u32(activation))
+                .transpose()?
+                .unwrap_or_default();
+            colors.push(GradientRecord {
+                ratio: ratio.clamp(0, 255) as u8,
+                color: Color::from_rgb(color, (alpha * 255.0) as u8),
+            })
         }
     }
     Ok(colors)

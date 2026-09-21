@@ -8,8 +8,8 @@ use crate::avm1::{ArrayBuilder, Object, Value, fscommand, globals, scope};
 use crate::backend::navigator::{NavigationMethod, Request};
 use crate::context::UpdateContext;
 use crate::display_object::{
-    DisplayObject, DisplayObjectContainer, GotoInfo, MovieClip, StopOrPlay, TDisplayObject,
-    TDisplayObjectContainer,
+    DisplayObject, DisplayObjectContainer, EditText, GotoInfo, MovieClip, StopOrPlay,
+    TDisplayObject, TDisplayObjectContainer,
 };
 use crate::ecma_conversions::{f64_to_wrapping_i32, f64_to_wrapping_u32};
 use crate::loader::MovieLoaderVMData;
@@ -2815,6 +2815,45 @@ impl<'a, 'gc> Activation<'a, 'gc> {
         Ok(start.object1().map(|object| (object, path)))
     }
 
+    /// Resolves `path` (the portion of a `GetVariable`/`SetVariable` path before
+    /// a trailing `.scroll`/`.maxscroll` suffix) to the `EditText` whose
+    /// `TextField.variable` is bound to it, if any.
+    ///
+    /// This implements a legacy feature from SWF4, which predates ActionScript's
+    /// object model: text fields could only be interacted with via the variable
+    /// name they were bound to, and `scroll`/`maxscroll` were exposed as a
+    /// special suffix on that variable name rather than as a real property of
+    /// an object. This was kept for compatibility after SWF5 introduced
+    /// `TextField.scroll`/`TextField.maxscroll` as real properties.
+    /// See <https://github.com/ruffle-rs/ruffle/issues/10726>.
+    fn resolve_bound_text_field(
+        &mut self,
+        start: DisplayObject<'gc>,
+        path: &WStr,
+    ) -> Result<Option<EditText<'gc>>, Error<'gc>> {
+        let Some((object, var_name)) = self.resolve_variable_path(start, path)? else {
+            return Ok(None);
+        };
+        let Some(dobj) = object.as_display_object() else {
+            return Ok(None);
+        };
+        let Some(bindings) = dobj.avm1_text_field_bindings() else {
+            return Ok(None);
+        };
+
+        let case_sensitive = self.is_case_sensitive();
+        Ok(bindings
+            .iter()
+            .find(|binding| {
+                if case_sensitive {
+                    binding.variable_name.as_wstr() == var_name
+                } else {
+                    binding.variable_name.eq_ignore_case(var_name)
+                }
+            })
+            .map(|binding| binding.text_field))
+    }
+
     /// Gets the value referenced by a target path string.
     ///
     /// This can be a raw variable name, a slash path, a dot path, or weird combination thereof.
@@ -2869,6 +2908,21 @@ impl<'a, 'gc> Activation<'a, 'gc> {
                     if object.has_property(self, var_name) {
                         return Ok(CallableValue::Callable(object, object.get(var_name, self)?));
                     }
+                }
+            }
+
+            // SWF4 legacy `scroll`/`maxscroll` suffix (see `resolve_bound_text_field`).
+            let case_sensitive = self.is_case_sensitive();
+            let is_scroll = var_name.eq_with_case(b"scroll", case_sensitive);
+            let is_maxscroll = !is_scroll && var_name.eq_with_case(b"maxscroll", case_sensitive);
+            if is_scroll || is_maxscroll {
+                if let Some(text_field) = self.resolve_bound_text_field(start, path)? {
+                    let value = if is_scroll {
+                        Value::from_usize_lossy(text_field.scroll())
+                    } else {
+                        Value::from_usize_lossy(text_field.maxscroll())
+                    };
+                    return Ok(CallableValue::UnCallable(value));
                 }
             }
 
@@ -2954,6 +3008,15 @@ impl<'a, 'gc> Activation<'a, 'gc> {
                     object.set(var_name, value, self)?;
                     return Ok(());
                 }
+            }
+
+            // SWF4 legacy `scroll` suffix (see `resolve_bound_text_field`).
+            // Note that `maxscroll` is read-only, matching Flash Player.
+            if var_name.eq_with_case(b"scroll", self.is_case_sensitive())
+                && let Some(text_field) = self.resolve_bound_text_field(start, path)?
+            {
+                let input = value.coerce_to_f64(self)?;
+                text_field.set_scroll(input, true, self.context);
             }
 
             return Ok(());
